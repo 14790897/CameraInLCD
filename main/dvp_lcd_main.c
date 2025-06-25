@@ -24,6 +24,10 @@
 #include "esp_system.h"
 #include "example_config.h"
 
+// Alternative SPI host definition - uncomment to try SPI2_HOST instead
+// #define LCD_SPI_HOST SPI3_HOST
+#define LCD_SPI_HOST SPI2_HOST
+
 static const char *TAG = "dvp_camera_spi";
 
 // Camera initialization function for ESP32-S3
@@ -105,7 +109,7 @@ static esp_err_t example_spi_lcd_init(esp_lcd_panel_handle_t *panel_handle, void
         .quadhd_io_num = -1,
         .max_transfer_sz = EXAMPLE_LCD_H_RES * 80 * sizeof(uint16_t),
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(SPI3_HOST, &buscfg, SPI_DMA_CH_AUTO));
+    ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     esp_lcd_panel_io_handle_t io_handle = NULL;
     esp_lcd_panel_io_spi_config_t io_config = {
@@ -117,7 +121,7 @@ static esp_err_t example_spi_lcd_init(esp_lcd_panel_handle_t *panel_handle, void
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI3_HOST, &io_config, &io_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_SPI_HOST, &io_config, &io_handle));
 
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
