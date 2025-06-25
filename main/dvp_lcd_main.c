@@ -10,6 +10,7 @@
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
@@ -20,6 +21,7 @@
 #include "esp_camera.h"
 #include "esp_lcd_ili9341.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "example_config.h"
 
 static const char *TAG = "dvp_camera_spi";
@@ -80,7 +82,8 @@ static esp_err_t example_camera_init(void)
     s->set_gain_ctrl(s, 1);      // 0 = disable, 1 = enable
     s->set_exposure_ctrl(s, 1);  // 0 = disable, 1 = enable
     s->set_hmirror(s, 0);        // 0 = disable, 1 = enable
-    s->set_vflip(s, 0);          // 0 = disable, 1 = enable    ESP_LOGI(TAG, "Camera initialized successfully");
+    s->set_vflip(s, 0);          // 0 = disable, 1 = enable    
+    ESP_LOGI(TAG, "Camera initialized successfully");
     
     // 显示摄像头内存使用情况
     multi_heap_info_t psram_info_after;
@@ -133,7 +136,9 @@ static esp_err_t example_spi_lcd_init(esp_lcd_panel_handle_t *panel_handle, void
         .pin_bit_mask = 1ULL << EXAMPLE_PIN_NUM_BK_LIGHT
     };
     ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
-    ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL));    // Allocate frame buffer in PSRAM for larger capacity
+    ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL));
+    
+    // Allocate frame buffer in PSRAM for larger capacity
     size_t buffer_size = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * sizeof(uint16_t);
     *frame_buffer = heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (*frame_buffer == NULL) {
@@ -150,7 +155,9 @@ void app_main(void)
 {
     esp_lcd_panel_handle_t panel_handle = NULL;
     void *frame_buffer = NULL;
-    size_t frame_buffer_size = 0;    // 检查PSRAM状态
+    size_t frame_buffer_size = 0;
+    
+    // 检查PSRAM状态
     ESP_LOGI(TAG, "=== PSRAM Status Check ===");
     
     // 检查PSRAM是否可用
@@ -208,33 +215,44 @@ void app_main(void)
     ESP_LOGI(TAG, "Starting camera capture...");
 
     uint32_t frame_count = 0;
+    const uint32_t frame_log_interval = 30; // Log every 30 frames
+    
     while (1) {
         // Capture frame from camera
         camera_fb_t *pic = esp_camera_fb_get();
         if (pic) {
-            if (pic->format == PIXFORMAT_RGB565 && pic->len <= frame_buffer_size) {
+            // Validate frame format and size
+            if (pic->format == PIXFORMAT_RGB565 && pic->len <= frame_buffer_size && pic->len > 0) {
                 // Copy camera frame to display buffer
                 memcpy(frame_buffer, pic->buf, pic->len);
                 
-                // Update LCD display with new frame
+                // Ensure cache coherency
                 esp_cache_msync((void *)frame_buffer, frame_buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-                esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, frame_buffer);
+                
+                // Update LCD display with new frame
+                esp_err_t display_ret = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, frame_buffer);
+                if (display_ret != ESP_OK) {
+                    ESP_LOGW(TAG, "LCD display error: 0x%x", display_ret);
+                }
                 
                 frame_count++;
-                if (frame_count % 30 == 0) {  // Log every 30 frames
+                if (frame_count % frame_log_interval == 0) {  // Log every 30 frames
                     ESP_LOGI(TAG, "Frame %lu displayed, size: %d bytes", frame_count, pic->len);
                 }
             } else {
-                ESP_LOGW(TAG, "Unexpected frame format: %d, size: %d", pic->format, pic->len);
+                ESP_LOGW(TAG, "Invalid frame - format: %d, size: %d, expected max: %zu", 
+                         pic->format, pic->len, frame_buffer_size);
             }
             
+            // Always return the frame buffer
             esp_camera_fb_return(pic);
         } else {
             ESP_LOGE(TAG, "Camera capture failed");
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(100)); // Wait before retry
         }
         
-        vTaskDelay(pdMS_TO_TICKS(33)); // ~30 FPS
+        // Frame rate control (~30 FPS)
+        vTaskDelay(pdMS_TO_TICKS(33));
     }
 }
 
