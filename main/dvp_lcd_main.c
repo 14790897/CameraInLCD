@@ -52,8 +52,8 @@ static esp_err_t example_camera_init(void)
     config.pin_sccb_scl = EXAMPLE_ISP_DVP_CAM_SCCB_SCL_IO;
     config.pin_pwdn = EXAMPLE_ISP_DVP_CAM_PWDN_IO;
     config.pin_reset = EXAMPLE_ISP_DVP_CAM_RESET_IO;
-    config.xclk_freq_hz = 16000000;         // 16MHz时钟频率
-    config.frame_size = FRAMESIZE_QQVGA;    // 160x120 for ST7735S
+    config.xclk_freq_hz = 8000000;          // 降低到8MHz时钟频率以降低硬件刷新率
+    config.frame_size = FRAMESIZE_QVGA;     // 320x240 for ST7735S
     config.pixel_format = PIXFORMAT_RGB565; // RGB565 format
     config.grab_mode = CAMERA_GRAB_LATEST;  // Changed to LATEST to avoid buffer buildup
     config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -87,7 +87,7 @@ static esp_err_t example_camera_init(void)
     }
 
     if (s->set_framesize) {
-        s->set_framesize(s, FRAMESIZE_QQVGA);  // Ensure 160x120
+        s->set_framesize(s, FRAMESIZE_QVGA); // Ensure 320x240
         ESP_LOGI(TAG, "✓ Frame size set to QQVGA (160x120)");
         vTaskDelay(pdMS_TO_TICKS(300));
     }
@@ -330,12 +330,13 @@ void app_main(void)
     {
         camera_fb_t *pic = esp_camera_fb_get();
         if (pic) {
-            ESP_LOGI(TAG, "Camera frame: %dx%d, format: %d, size: %zu bytes", 
-                     pic->width, pic->height, pic->format, pic->len);
-            
-            // Check for both possible valid configurations
+            // ESP_LOGI(TAG, "Camera frame: %dx%d, format: %d, size: %zu bytes",
+            //          pic->width, pic->height, pic->format, pic->len);
+
+            // Check for all possible valid configurations
             if ((pic->width == 160 && pic->height == 120 && pic->format == PIXFORMAT_RGB565) ||
-                (pic->width == 128 && pic->height == 128 && pic->format == PIXFORMAT_RGB565))
+                (pic->width == 128 && pic->height == 128 && pic->format == PIXFORMAT_RGB565) ||
+                (pic->width == 320 && pic->height == 240 && pic->format == PIXFORMAT_RGB565))
             {
                 uint16_t *src = (uint16_t *)pic->buf;
                 uint16_t *dst = (uint16_t *)frame_buffer;
@@ -391,6 +392,37 @@ void app_main(void)
                     }
                     */
                 }
+                else if (pic->width == 320 && pic->height == 240)
+                {
+                    // Handle QVGA 320x240 to 128x160 conversion
+                    // Method: Center crop and then scale down
+                    // First crop 320x240 to get center 256x192 area (2:1.5 ratio similar to 128:96)
+                    // Then scale down to 128x160 using sampling
+
+                    int crop_width = 256;                       // Crop to center 256 pixels horizontally
+                    int crop_height = 192;                      // Crop to center 192 pixels vertically
+                    int crop_start_x = (320 - crop_width) / 2;  // Start at x=32
+                    int crop_start_y = (240 - crop_height) / 2; // Start at y=24
+
+                    for (int dst_y = 0; dst_y < ST7735S_LCD_V_RES; dst_y++)
+                    {
+                        // Map dst_y (0-159) to cropped source y (0-191)
+                        int src_y = crop_start_y + (dst_y * crop_height) / ST7735S_LCD_V_RES;
+                        if (src_y >= 240)
+                            src_y = 239; // Boundary check
+
+                        for (int dst_x = 0; dst_x < ST7735S_LCD_H_RES; dst_x++)
+                        {
+                            // Map dst_x (0-127) to cropped source x (0-255)
+                            int src_x = crop_start_x + (dst_x * crop_width) / ST7735S_LCD_H_RES;
+                            if (src_x >= 320)
+                                src_x = 319; // Boundary check
+
+                            dst[dst_y * ST7735S_LCD_H_RES + dst_x] =
+                                src[src_y * 320 + src_x];
+                        }
+                    }
+                }
 
                 // Display to LCD
                 esp_lcd_panel_draw_bitmap(panel_handle, 0, 0,
@@ -399,7 +431,7 @@ void app_main(void)
             }
             else
             {
-                ESP_LOGW(TAG, "Camera frame size/format mismatch: %dx%d, format: %d (expected 160x120 or 128x128 with RGB565)",
+                ESP_LOGW(TAG, "Camera frame size/format mismatch: %dx%d, format: %d (expected 160x120, 128x128, or 320x240 with RGB565)",
                          pic->width, pic->height, pic->format);
             }
 
@@ -408,8 +440,8 @@ void app_main(void)
             ESP_LOGE(TAG, "Camera capture failed");
         }
 
-        // 控制帧率
-        vTaskDelay(pdMS_TO_TICKS(100)); // 降低到10fps以便观察图像质量
+        // 控制帧率 - 由于降低了时钟频率，可以减少软件延迟
+        vTaskDelay(pdMS_TO_TICKS(100)); // 恢复到10fps，因为硬件层面已经降速
     }
 }
 
