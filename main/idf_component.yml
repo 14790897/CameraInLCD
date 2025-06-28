@@ -1,7 +1,8 @@
 dependencies:
   idf:
-    version: ">=5.0.0"
+    version: '>=5.0.0'
   espressif/esp32-camera:
-    version: "^2.0.0"
+    version: ^2.0.0
   espressif/esp_lcd_ili9341:
-    version: "^1.0.0"
+    version: ^1.0.0
+  teriyakigod/esp_lcd_st7735: ^0.0.1
