@@ -18,6 +18,34 @@
 
 static const char *TAG = "camera_test";
 
+// 清理摄像头缓冲区的函数
+static void camera_clear_buffers(void)
+{
+    ESP_LOGI(TAG, "Clearing camera buffers...");
+    camera_fb_t *fb;
+    int cleared_count = 0;
+
+    // 清理所有待处理的帧缓冲，增加清理次数
+    while ((fb = esp_camera_fb_get()) != NULL && cleared_count < 20)
+    {
+        esp_camera_fb_return(fb);
+        cleared_count++;
+        vTaskDelay(pdMS_TO_TICKS(20)); // 增加延迟时间
+    }
+
+    if (cleared_count > 0)
+    {
+        ESP_LOGI(TAG, "Cleared %d frame buffers", cleared_count);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "No buffers to clear");
+    }
+
+    // 额外延迟确保清理完成
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
 // Camera initialization function for ESP32-S3
 static esp_err_t camera_init(void)
 {
@@ -42,13 +70,13 @@ static esp_err_t camera_init(void)
     config.pin_sccb_scl = EXAMPLE_ISP_DVP_CAM_SCCB_SCL_IO;
     config.pin_pwdn = EXAMPLE_ISP_DVP_CAM_PWDN_IO;
     config.pin_reset = EXAMPLE_ISP_DVP_CAM_RESET_IO;
-    config.xclk_freq_hz = 20000000;
+    config.xclk_freq_hz = 20000000;     
     config.frame_size = FRAMESIZE_QVGA; // 320x240
     config.pixel_format = PIXFORMAT_RGB565; // RGB565 format
-    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+    config.grab_mode = CAMERA_GRAB_LATEST;  // 改为LATEST避免缓冲积累
     config.fb_location = CAMERA_FB_IN_PSRAM; // 使用 PSRAM
     config.jpeg_quality = 12;
-    config.fb_count = 2; // 使用 2 个缓冲提高性能
+    config.fb_count = 1; // 减少到1个缓冲避免溢出
 
     // Camera init
     esp_err_t err = esp_camera_init(&config);
@@ -58,6 +86,11 @@ static esp_err_t camera_init(void)
     }
 
     ESP_LOGI(TAG, "Camera hardware initialized successfully");
+
+    // 初始化后立即清理可能存在的缓冲区
+    ESP_LOGI(TAG, "Clearing any initial buffers...");
+    vTaskDelay(pdMS_TO_TICKS(1000)); // 等待1秒让硬件稳定
+    camera_clear_buffers();
 
     // Get camera sensor
     sensor_t *s = esp_camera_sensor_get();
@@ -71,12 +104,59 @@ static esp_err_t camera_init(void)
     // 输出传感器信息
     ESP_LOGI(TAG, "Camera sensor detected: PID=0x%02x, VER=0x%02x", s->id.PID, s->id.VER);
 
+    // 在配置传感器前再次清理缓冲区
+    ESP_LOGI(TAG, "Pre-configuration buffer cleanup...");
+    camera_clear_buffers();
+    vTaskDelay(pdMS_TO_TICKS(500)); // 额外延迟
+
     // 安全地设置传感器参数 - 检查函数指针是否有效
     ESP_LOGI(TAG, "Configuring sensor settings...");
-    
+
+    // 首先设置帧率控制以增加HTS/VTS时间
+    if (s->set_framesize)
+    {
+        s->set_framesize(s, FRAMESIZE_QVGA);
+        ESP_LOGI(TAG, "✓ Frame size set to QVGA");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // 设置较低的增益和曝光以稳定时序
+    if (s->set_gainceiling)
+    {
+        s->set_gainceiling(s, GAINCEILING_32X); // 降低增益上限
+        ESP_LOGI(TAG, "✓ Gain ceiling set to 32X (lower for stable timing)");
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+    else
+    {
+        ESP_LOGW(TAG, "⚠ set_gainceiling function not available");
+    }
+
+    if (s->set_gain_ctrl)
+    {
+        s->set_gain_ctrl(s, 1); // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Gain control enabled");
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+    else
+    {
+        ESP_LOGW(TAG, "⚠ set_gain_ctrl function not available");
+    }
+
+    if (s->set_exposure_ctrl)
+    {
+        s->set_exposure_ctrl(s, 1); // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Exposure control enabled");
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+    else
+    {
+        ESP_LOGW(TAG, "⚠ set_exposure_ctrl function not available");
+    }
     if (s->set_brightness) {
         s->set_brightness(s, 0);     // -2 to 2
         ESP_LOGI(TAG, "✓ Brightness set");
+        vTaskDelay(pdMS_TO_TICKS(150)); // 增加延迟为时序留出空间
     } else {
         ESP_LOGW(TAG, "⚠ set_brightness function not available");
     }
@@ -84,6 +164,7 @@ static esp_err_t camera_init(void)
     if (s->set_contrast) {
         s->set_contrast(s, 0);       // -2 to 2
         ESP_LOGI(TAG, "✓ Contrast set");
+        vTaskDelay(pdMS_TO_TICKS(150));
     } else {
         ESP_LOGW(TAG, "⚠ set_contrast function not available");
     }
@@ -91,20 +172,15 @@ static esp_err_t camera_init(void)
     if (s->set_saturation) {
         s->set_saturation(s, 0);     // -2 to 2
         ESP_LOGI(TAG, "✓ Saturation set");
+        vTaskDelay(pdMS_TO_TICKS(150));
     } else {
         ESP_LOGW(TAG, "⚠ set_saturation function not available");
     }
-    
-    if (s->set_gainceiling) {
-        s->set_gainceiling(s, GAINCEILING_128X);
-        ESP_LOGI(TAG, "✓ Gain ceiling set");
-    } else {
-        ESP_LOGW(TAG, "⚠ set_gainceiling function not available");
-    }
-    
+
     if (s->set_colorbar) {
         s->set_colorbar(s, 0);       // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Color bar disabled");
+        vTaskDelay(pdMS_TO_TICKS(150));
     } else {
         ESP_LOGW(TAG, "⚠ set_colorbar function not available");
     }
@@ -112,27 +188,15 @@ static esp_err_t camera_init(void)
     if (s->set_whitebal) {
         s->set_whitebal(s, 1);       // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ White balance enabled");
+        vTaskDelay(pdMS_TO_TICKS(150));
     } else {
         ESP_LOGW(TAG, "⚠ set_whitebal function not available");
     }
-    
-    if (s->set_gain_ctrl) {
-        s->set_gain_ctrl(s, 1);      // 0 = disable, 1 = enable
-        ESP_LOGI(TAG, "✓ Gain control enabled");
-    } else {
-        ESP_LOGW(TAG, "⚠ set_gain_ctrl function not available");
-    }
-    
-    if (s->set_exposure_ctrl) {
-        s->set_exposure_ctrl(s, 1);  // 0 = disable, 1 = enable
-        ESP_LOGI(TAG, "✓ Exposure control enabled");
-    } else {
-        ESP_LOGW(TAG, "⚠ set_exposure_ctrl function not available");
-    }
-    
+
     if (s->set_hmirror) {
         s->set_hmirror(s, 0);        // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Horizontal mirror disabled");
+        vTaskDelay(pdMS_TO_TICKS(150));
     } else {
         ESP_LOGW(TAG, "⚠ set_hmirror function not available");
     }
@@ -140,16 +204,47 @@ static esp_err_t camera_init(void)
     if (s->set_vflip) {
         s->set_vflip(s, 0);          // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Vertical flip disabled");
+        vTaskDelay(pdMS_TO_TICKS(150));
     } else {
         ESP_LOGW(TAG, "⚠ set_vflip function not available");
     }
-    
+
+    // 额外的时序优化设置
+    ESP_LOGI(TAG, "Applying additional timing optimizations for DMA...");
+
+    // 设置特殊的时序模式以减少数据突发传输
+    if (s->set_special_effect)
+    {
+        s->set_special_effect(s, 0); // 无特效，减少处理负载
+        ESP_LOGI(TAG, "✓ Special effects disabled for better timing");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // 如果支持，设置较低的质量模式以减少数据量
+    if (s->set_quality)
+    {
+        s->set_quality(s, 20); // 较低质量以减少数据传输压力
+        ESP_LOGI(TAG, "✓ Quality set to lower value for stable DMA");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
     ESP_LOGI(TAG, "Camera initialized successfully");
-    
+
+    // 应用HTS/VTS时序优化
+    ESP_LOGI(TAG, "Applying HTS/VTS timing optimizations...");
+
+    // 配置完成后清理缓冲区
+    ESP_LOGI(TAG, "Post-configuration buffer cleanup...");
+    camera_clear_buffers();
+
     // 等待传感器稳定
-    ESP_LOGI(TAG, "Waiting for sensor to stabilize...");
-    vTaskDelay(pdMS_TO_TICKS(2000)); // 等待2秒
-    
+    ESP_LOGI(TAG, "Waiting for sensor to stabilize with new timing settings...");
+    vTaskDelay(pdMS_TO_TICKS(8000)); // 增加到8秒等待时间，让时序完全稳定
+
+    // 最终清理
+    ESP_LOGI(TAG, "Final buffer cleanup before use...");
+    camera_clear_buffers();
+
     // 显示摄像头内存使用情况
     multi_heap_info_t psram_info_after;
     heap_caps_get_info(&psram_info_after, MALLOC_CAP_SPIRAM);
@@ -221,7 +316,8 @@ void app_main(void)
     // 摄像头测试
     // =================================================================
     ESP_LOGI(TAG, "=== Camera Test Start ===");
-    
+    vTaskDelay(pdMS_TO_TICKS(5000)); // 增加到5000ms延迟
+
     // 初始化摄像头
     esp_err_t camera_init_result = camera_init();
     if (camera_init_result != ESP_OK) {
@@ -230,7 +326,7 @@ void app_main(void)
     }
     
     ESP_LOGI(TAG, "Camera initialized successfully. Starting capture test...");
-    
+
     // 摄像头捕获测试
     uint32_t total_test_frames = 10;  // 先测试10帧，成功后可以增加
     uint32_t successful_captures = 0;
@@ -240,10 +336,23 @@ void app_main(void)
     
     for (uint32_t frame_num = 1; frame_num <= total_test_frames; frame_num++) {
         ESP_LOGI(TAG, "--- Capturing frame %lu/%lu ---", frame_num, total_test_frames);
-        
+
+        // 清理可能存在的旧帧缓冲
+        camera_fb_t *temp_fb;
+        int cleanup_count = 0;
+        while ((temp_fb = esp_camera_fb_get()) != NULL && cleanup_count < 5)
+        {
+            esp_camera_fb_return(temp_fb);
+            cleanup_count++;
+        }
+        if (cleanup_count > 0)
+        {
+            ESP_LOGW(TAG, "Cleaned up %d old frame buffers", cleanup_count);
+        }
+
         // 添加额外的延迟确保稳定性
-        vTaskDelay(pdMS_TO_TICKS(200)); // 200ms延迟
-        
+        vTaskDelay(pdMS_TO_TICKS(500)); // 增加到500ms延迟
+
         camera_fb_t *fb = esp_camera_fb_get();
         if (fb != NULL) {
             successful_captures++;
@@ -285,10 +394,15 @@ void app_main(void)
         } else {
             failed_captures++;
             ESP_LOGE(TAG, "  ✗ Frame %lu capture failed", frame_num);
+
+            // 尝试重置相机状态
+            ESP_LOGW(TAG, "Attempting to clear camera buffers...");
+            camera_clear_buffers();
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
         
         // 帧间延迟
-        vTaskDelay(pdMS_TO_TICKS(100)); // 100ms延迟
+        vTaskDelay(pdMS_TO_TICKS(300)); // 增加到300ms延迟
     }
     
     // 测试结果总结

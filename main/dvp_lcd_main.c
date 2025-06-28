@@ -52,13 +52,13 @@ static esp_err_t example_camera_init(void)
     config.pin_sccb_scl = EXAMPLE_ISP_DVP_CAM_SCCB_SCL_IO;
     config.pin_pwdn = EXAMPLE_ISP_DVP_CAM_PWDN_IO;
     config.pin_reset = EXAMPLE_ISP_DVP_CAM_RESET_IO;
-    config.xclk_freq_hz = 20000000;
+    config.xclk_freq_hz = 6000000;
     config.frame_size = FRAMESIZE_QQVGA;    // 160x120 for ST7735S
     config.pixel_format = PIXFORMAT_RGB565; // RGB565 format
-    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+    config.grab_mode = CAMERA_GRAB_LATEST;  // Changed to LATEST to avoid buffer buildup
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.jpeg_quality = 12;
-    config.fb_count = 2;
+    config.fb_count = 1;                    // Reduced to 1 buffer to prevent overflow
 
     // Camera init
     esp_err_t err = esp_camera_init(&config);
@@ -74,17 +74,85 @@ static esp_err_t example_camera_init(void)
         return ESP_FAIL;
     }
 
-    // OV7670 specific settings
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 0);
-    s->set_saturation(s, 0);
-    s->set_gainceiling(s, GAINCEILING_128X);
-    s->set_colorbar(s, 0);
-    s->set_whitebal(s, 1);
-    s->set_gain_ctrl(s, 1);
-    s->set_exposure_ctrl(s, 1);
-    s->set_hmirror(s, 0);
-    s->set_vflip(s, 0);
+    ESP_LOGI(TAG, "Camera sensor detected: PID=0x%02x, VER=0x%02x", s->id.PID, s->id.VER);
+
+    // Enable and configure sensor settings for consistent RGB565 output
+    if (s->set_framesize) {
+        s->set_framesize(s, FRAMESIZE_QQVGA);  // Ensure 160x120
+        ESP_LOGI(TAG, "✓ Frame size set to QQVGA (160x120)");
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (s->set_pixformat) {
+        s->set_pixformat(s, PIXFORMAT_RGB565);  // Ensure RGB565 format
+        ESP_LOGI(TAG, "✓ Pixel format set to RGB565");
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    // Configure sensor settings for stable operation
+    if (s->set_brightness) {
+        s->set_brightness(s, 0);     // -2 to 2
+        ESP_LOGI(TAG, "✓ Brightness set");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_contrast) {
+        s->set_contrast(s, 0);       // -2 to 2
+        ESP_LOGI(TAG, "✓ Contrast set");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_saturation) {
+        s->set_saturation(s, 0);     // -2 to 2
+        ESP_LOGI(TAG, "✓ Saturation set");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_gainceiling) {
+        s->set_gainceiling(s, GAINCEILING_32X);  // Lower gain for stability
+        ESP_LOGI(TAG, "✓ Gain ceiling set");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_colorbar) {
+        s->set_colorbar(s, 0);       // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Color bar disabled");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_whitebal) {
+        s->set_whitebal(s, 1);       // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ White balance enabled");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_gain_ctrl) {
+        s->set_gain_ctrl(s, 1);      // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Gain control enabled");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_exposure_ctrl) {
+        s->set_exposure_ctrl(s, 1);  // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Exposure control enabled");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_hmirror) {
+        s->set_hmirror(s, 0);        // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Horizontal mirror disabled");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    if (s->set_vflip) {
+        s->set_vflip(s, 0);          // 0 = disable, 1 = enable
+        ESP_LOGI(TAG, "✓ Vertical flip disabled");
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    // Wait for sensor to stabilize with new settings
+    ESP_LOGI(TAG, "Waiting for sensor to stabilize...");
+    vTaskDelay(pdMS_TO_TICKS(2000));
 
     ESP_LOGI(TAG, "Camera initialized successfully");
     return ESP_OK;
@@ -92,7 +160,6 @@ static esp_err_t example_camera_init(void)
 // ST7735S LCD initialization function
 static esp_err_t init_st7735s_lcd(esp_lcd_panel_handle_t *panel_handle)
 {
-    ESP_LOGI(TAG, "=== 初始化ST7735S LCD面板 ===");
 
     // 1. 初始化SPI总线
     ESP_LOGI(TAG, "1. 初始化SPI总线");
@@ -216,36 +283,51 @@ void app_main(void)
     {
         camera_fb_t *pic = esp_camera_fb_get();
         if (pic) {
-            // 检查图像尺寸是否匹配
-            if (pic->width == 160 && pic->height == 120 && pic->format == PIXFORMAT_RGB565)
+            ESP_LOGI(TAG, "Camera frame: %dx%d, format: %d, size: %zu bytes", 
+                     pic->width, pic->height, pic->format, pic->len);
+            
+            // Check for both possible valid configurations
+            if ((pic->width == 160 && pic->height == 120 && pic->format == PIXFORMAT_RGB565) ||
+                (pic->width == 128 && pic->height == 128 && pic->format == PIXFORMAT_RGB565))
             {
-                // 图像尺寸需要调整到ST7735S分辨率 (128x160)
-                // 从160x120裁剪/缩放到128x160
                 uint16_t *src = (uint16_t *)pic->buf;
                 uint16_t *dst = (uint16_t *)frame_buffer;
 
-                // 简单的裁剪策略：从中心裁剪128x120，然后拉伸到128x160
-                int src_start_x = (160 - 128) / 2; // 从x=16开始
+                if (pic->width == 160 && pic->height == 120) {
+                    // Original code for 160x120 to 128x160 conversion
+                    int src_start_x = (160 - 128) / 2; // Start from x=16
 
-                for (int dst_y = 0; dst_y < ST7735S_LCD_V_RES; dst_y++)
-                {
-                    int src_y = (dst_y * 120) / ST7735S_LCD_V_RES; // 拉伸映射
-                    for (int dst_x = 0; dst_x < ST7735S_LCD_H_RES; dst_x++)
+                    for (int dst_y = 0; dst_y < ST7735S_LCD_V_RES; dst_y++)
                     {
-                        int src_x = src_start_x + dst_x;
-                        dst[dst_y * ST7735S_LCD_H_RES + dst_x] =
-                            src[src_y * 160 + src_x];
+                        int src_y = (dst_y * 120) / ST7735S_LCD_V_RES; // Stretch mapping
+                        for (int dst_x = 0; dst_x < ST7735S_LCD_H_RES; dst_x++)
+                        {
+                            int src_x = src_start_x + dst_x;
+                            dst[dst_y * ST7735S_LCD_H_RES + dst_x] =
+                                src[src_y * 160 + src_x];
+                        }
+                    }
+                } else if (pic->width == 128 && pic->height == 128) {
+                    // Handle 128x128 to 128x160 conversion
+                    for (int dst_y = 0; dst_y < ST7735S_LCD_V_RES; dst_y++)
+                    {
+                        int src_y = (dst_y * 128) / ST7735S_LCD_V_RES; // Map to source height
+                        for (int dst_x = 0; dst_x < ST7735S_LCD_H_RES; dst_x++)
+                        {
+                            dst[dst_y * ST7735S_LCD_H_RES + dst_x] =
+                                src[src_y * 128 + dst_x];
+                        }
                     }
                 }
 
-                // 显示到LCD
+                // Display to LCD
                 esp_lcd_panel_draw_bitmap(panel_handle, 0, 0,
                                           ST7735S_LCD_H_RES, ST7735S_LCD_V_RES,
                                           frame_buffer);
             }
             else
             {
-                ESP_LOGW(TAG, "Camera frame size mismatch: %dx%d, format: %d",
+                ESP_LOGW(TAG, "Camera frame size/format mismatch: %dx%d, format: %d (expected 160x120 or 128x128 with RGB565)",
                          pic->width, pic->height, pic->format);
             }
 
