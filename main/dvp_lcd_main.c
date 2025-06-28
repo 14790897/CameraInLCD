@@ -1,34 +1,32 @@
 /*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Apache-2.0
+ * DVP Camera + ST7735S LCD Integration
+ * 摄像头与ST7735S LCD显示集成
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "sdkconfig.h"
-#include "esp_attr.h"
-#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_vendor.h"
-#include "esp_lcd_panel_ops.h"
-#include "driver/spi_master.h"
+#include "esp_log.h"
+#include "esp_system.h"
+#include "esp_err.h"
+#include "esp_check.h"
 #include "driver/gpio.h"
+#include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_heap_caps.h"
 #include "esp_cache.h"
 #include "driver/ledc.h"
 #include "esp_camera.h"
-#include "esp_lcd_ili9341.h"
-#include "esp_heap_caps.h"
-#include "esp_system.h"
+#include "esp_lcd_st7735.h"
 #include "example_config.h"
 
-// Alternative SPI host definition - uncomment to try SPI2_HOST instead
-// #define LCD_SPI_HOST SPI3_HOST
-#define LCD_SPI_HOST SPI2_HOST
+// ST7735S 实际分辨率定义
+#define ST7735S_LCD_H_RES 128
+#define ST7735S_LCD_V_RES 160
 
-static const char *TAG = "dvp_camera_spi";
+static const char *TAG = "dvp_camera_st7735";
 
 // Camera initialization function for ESP32-S3
 static esp_err_t example_camera_init(void)
@@ -54,13 +52,13 @@ static esp_err_t example_camera_init(void)
     config.pin_sccb_scl = EXAMPLE_ISP_DVP_CAM_SCCB_SCL_IO;
     config.pin_pwdn = EXAMPLE_ISP_DVP_CAM_PWDN_IO;
     config.pin_reset = EXAMPLE_ISP_DVP_CAM_RESET_IO;
-    config.xclk_freq_hz = 20000000; // 20MHz 对 OV7670 更稳定
-    config.frame_size = FRAMESIZE_QVGA; // 320x240
+    config.xclk_freq_hz = 20000000;
+    config.frame_size = FRAMESIZE_QQVGA;    // 160x120 for ST7735S
     config.pixel_format = PIXFORMAT_RGB565; // RGB565 format
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-    config.fb_location = CAMERA_FB_IN_PSRAM; // 使用 PSRAM，因为已经成功初始化
+    config.fb_location = CAMERA_FB_IN_PSRAM;
     config.jpeg_quality = 12;
-    config.fb_count = 2; // 使用 2 个缓冲提高性能
+    config.fb_count = 2;
 
     // Camera init
     esp_err_t err = esp_camera_init(&config);
@@ -77,186 +75,187 @@ static esp_err_t example_camera_init(void)
     }
 
     // OV7670 specific settings
-    s->set_brightness(s, 0);     // -2 to 2
-    s->set_contrast(s, 0);       // -2 to 2
-    s->set_saturation(s, 0);     // -2 to 2
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 0);
+    s->set_saturation(s, 0);
     s->set_gainceiling(s, GAINCEILING_128X);
-    s->set_colorbar(s, 0);       // 0 = disable, 1 = enable
-    s->set_whitebal(s, 1);       // 0 = disable, 1 = enable
-    s->set_gain_ctrl(s, 1);      // 0 = disable, 1 = enable
-    s->set_exposure_ctrl(s, 1);  // 0 = disable, 1 = enable
-    s->set_hmirror(s, 0);        // 0 = disable, 1 = enable
-    s->set_vflip(s, 0);          // 0 = disable, 1 = enable    
+    s->set_colorbar(s, 0);
+    s->set_whitebal(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_hmirror(s, 0);
+    s->set_vflip(s, 0);
+
     ESP_LOGI(TAG, "Camera initialized successfully");
-    
-    // 显示摄像头内存使用情况
-    multi_heap_info_t psram_info_after;
-    heap_caps_get_info(&psram_info_after, MALLOC_CAP_SPIRAM);
-    ESP_LOGI(TAG, "After camera init - PSRAM free: %zu bytes", psram_info_after.total_free_bytes);
-    
     return ESP_OK;
 }
-static esp_err_t example_spi_lcd_init(esp_lcd_panel_handle_t *panel_handle, void **frame_buffer)
+// ST7735S LCD initialization function
+static esp_err_t init_st7735s_lcd(esp_lcd_panel_handle_t *panel_handle)
 {
-    esp_err_t ret = ESP_OK;
-    
-    // Initialize SPI bus
-    spi_bus_config_t buscfg = {
-        .sclk_io_num = EXAMPLE_PIN_NUM_SCLK,
+    ESP_LOGI(TAG, "=== 初始化ST7735S LCD面板 ===");
+
+    // 1. 初始化SPI总线
+    ESP_LOGI(TAG, "1. 初始化SPI总线");
+    spi_bus_config_t bus_config = {
         .mosi_io_num = EXAMPLE_PIN_NUM_MOSI,
-        .miso_io_num = EXAMPLE_PIN_NUM_MISO,
+        .miso_io_num = -1,
+        .sclk_io_num = EXAMPLE_PIN_NUM_SCLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = EXAMPLE_LCD_H_RES * 80 * sizeof(uint16_t),
+        .max_transfer_sz = ST7735S_LCD_H_RES * ST7735S_LCD_V_RES * sizeof(uint16_t),
+        .flags = SPICOMMON_BUSFLAG_MASTER,
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
+    esp_err_t ret = spi_bus_initialize(SPI3_HOST, &bus_config, SPI_DMA_CH_AUTO);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "SPI总线初始化失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ SPI总线初始化成功");
+
+    // 2. 创建LCD面板IO
+    ESP_LOGI(TAG, "2. 创建LCD面板IO");
     esp_lcd_panel_io_handle_t io_handle = NULL;
     esp_lcd_panel_io_spi_config_t io_config = {
         .dc_gpio_num = EXAMPLE_PIN_NUM_LCD_DC,
         .cs_gpio_num = EXAMPLE_PIN_NUM_LCD_CS,
-        .pclk_hz = EXAMPLE_LCD_PIXEL_CLOCK_HZ,
+        .pclk_hz = 10 * 1000 * 1000, // 10MHz
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
         .trans_queue_depth = 10,
+        .on_color_trans_done = NULL,
+        .user_ctx = NULL,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_SPI_HOST, &io_config, &io_handle));
 
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI3_HOST, &io_config, &io_handle);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "LCD面板IO创建失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ LCD面板IO创建成功");
+
+    // 3. 创建ST7735S面板
+    ESP_LOGI(TAG, "3. 创建ST7735S面板");
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = EXAMPLE_PIN_NUM_LCD_RST,
         .rgb_endian = LCD_RGB_ENDIAN_BGR,
         .bits_per_pixel = 16,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io_handle, &panel_config, panel_handle));
 
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(*panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(*panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(*panel_handle, true));
+    ret = esp_lcd_new_panel_st7735(io_handle, &panel_config, panel_handle);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ST7735S面板创建失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ ST7735S面板创建成功");
 
-    // Configure backlight
-    gpio_config_t bk_gpio_config = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = 1ULL << EXAMPLE_PIN_NUM_BK_LIGHT
-    };
-    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
-    ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL));
-    
-    // Allocate frame buffer in PSRAM for larger capacity
-    size_t buffer_size = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * sizeof(uint16_t);
-    *frame_buffer = heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (*frame_buffer == NULL) {
-        ESP_LOGE(TAG, "Failed to allocate frame buffer in PSRAM");
-        return ESP_ERR_NO_MEM;
+    // 4. 重置和初始化面板
+    ESP_LOGI(TAG, "4. 重置和初始化面板");
+    ret = esp_lcd_panel_reset(*panel_handle);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "面板重置失败: %s", esp_err_to_name(ret));
+        return ret;
     }
 
-    return ret;
-}
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-// ILI9341 LCD initialization function
+    ret = esp_lcd_panel_init(*panel_handle);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "面板初始化失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ 面板重置和初始化成功");
+
+    // 5. 开启显示
+    ESP_LOGI(TAG, "5. 开启显示");
+    ret = esp_lcd_panel_disp_on_off(*panel_handle, true);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "开启显示失败: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ 显示已开启");
+
+    return ESP_OK;
+}
 
 void app_main(void)
 {
     esp_lcd_panel_handle_t panel_handle = NULL;
     void *frame_buffer = NULL;
-    size_t frame_buffer_size = 0;
-    
-    // 检查PSRAM状态
-    ESP_LOGI(TAG, "=== PSRAM Status Check ===");
-    
-    // 检查PSRAM是否可用
-    multi_heap_info_t psram_info;
-    heap_caps_get_info(&psram_info, MALLOC_CAP_SPIRAM);
-    
-    if (psram_info.total_allocated_bytes + psram_info.total_free_bytes > 0) {
-        ESP_LOGI(TAG, "PSRAM is available");
-        ESP_LOGI(TAG, "PSRAM total: %zu bytes (%.2f MB)", 
-                 psram_info.total_allocated_bytes + psram_info.total_free_bytes,
-                 (float)(psram_info.total_allocated_bytes + psram_info.total_free_bytes) / (1024 * 1024));
-        ESP_LOGI(TAG, "PSRAM free: %zu bytes (%.2f MB)", 
-                 psram_info.total_free_bytes, 
-                 (float)psram_info.total_free_bytes / (1024 * 1024));
-        ESP_LOGI(TAG, "PSRAM used: %zu bytes (%.2f MB)", 
-                 psram_info.total_allocated_bytes,
-                 (float)psram_info.total_allocated_bytes / (1024 * 1024));
-    } else {
-        ESP_LOGE(TAG, "PSRAM is NOT available or initialized");
+
+    ESP_LOGI(TAG, "=== DVP Camera + ST7735S LCD Integration ===");
+
+    // 初始化ST7735S LCD
+    ESP_ERROR_CHECK(init_st7735s_lcd(&panel_handle));
+
+    // 分配帧缓冲区 - 使用ST7735S分辨率
+    size_t frame_buffer_size = ST7735S_LCD_H_RES * ST7735S_LCD_V_RES * sizeof(uint16_t);
+    frame_buffer = heap_caps_malloc(frame_buffer_size, MALLOC_CAP_DMA);
+    if (frame_buffer == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to allocate frame buffer");
+        return;
     }
-    
-    // 显示内部RAM状态
-    multi_heap_info_t dram_info;
-    heap_caps_get_info(&dram_info, MALLOC_CAP_INTERNAL);
-    ESP_LOGI(TAG, "Internal RAM free: %zu bytes (%.2f KB)", dram_info.total_free_bytes, (float)dram_info.total_free_bytes / 1024);
-    ESP_LOGI(TAG, "=== End PSRAM Status ===");
+    ESP_LOGI(TAG, "Frame buffer allocated: %zu bytes for %dx%d display",
+             frame_buffer_size, ST7735S_LCD_H_RES, ST7735S_LCD_V_RES);
 
-    /**
-     * @background
-     * OV7670 sensor outputs RGB565 format
-     * Direct display on ILI9341 320x240 SPI LCD without ISP processing
-     */
-    
-    //---------------SPI LCD Init------------------//
-    ESP_ERROR_CHECK(example_spi_lcd_init(&panel_handle, &frame_buffer));
-
-    //---------------Necessary variable config------------------//
-    frame_buffer_size = EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * EXAMPLE_RGB565_BITS_PER_PIXEL / 8;
-
-    ESP_LOGI(TAG, "LCD_H_RES: %d, LCD_V_RES: %d, bits per pixel: %d", EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, EXAMPLE_RGB565_BITS_PER_PIXEL);
-    ESP_LOGI(TAG, "frame_buffer_size: %zu", frame_buffer_size);
-    ESP_LOGI(TAG, "frame_buffer: %p", frame_buffer);
-
-    //--------Camera Init-----------//
+    // 初始化摄像头
     ESP_ERROR_CHECK(example_camera_init());
 
-    //---------------LCD Display Init------------------//
-    // Clear to white
-    memset(frame_buffer, 0xFF, frame_buffer_size);
-    esp_cache_msync((void *)frame_buffer, frame_buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    
-    // Display initial white frame
-    esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, frame_buffer);
+    ESP_LOGI(TAG, "=== Starting Camera Preview ===");
 
-    ESP_LOGI(TAG, "Starting camera capture...");
-
-    uint32_t frame_count = 0;
-    const uint32_t frame_log_interval = 30; // Log every 30 frames
-    
-    while (1) {
-        // Capture frame from camera
+    // 主循环 - 获取摄像头图像并显示到LCD
+    while (1)
+    {
         camera_fb_t *pic = esp_camera_fb_get();
         if (pic) {
-            // Validate frame format and size
-            if (pic->format == PIXFORMAT_RGB565 && pic->len <= frame_buffer_size && pic->len > 0) {
-                // Copy camera frame to display buffer
-                memcpy(frame_buffer, pic->buf, pic->len);
-                
-                // Ensure cache coherency
-                esp_cache_msync((void *)frame_buffer, frame_buffer_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-                
-                // Update LCD display with new frame
-                esp_err_t display_ret = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, EXAMPLE_LCD_H_RES, EXAMPLE_LCD_V_RES, frame_buffer);
-                if (display_ret != ESP_OK) {
-                    ESP_LOGW(TAG, "LCD display error: 0x%x", display_ret);
+            // 检查图像尺寸是否匹配
+            if (pic->width == 160 && pic->height == 120 && pic->format == PIXFORMAT_RGB565)
+            {
+                // 图像尺寸需要调整到ST7735S分辨率 (128x160)
+                // 从160x120裁剪/缩放到128x160
+                uint16_t *src = (uint16_t *)pic->buf;
+                uint16_t *dst = (uint16_t *)frame_buffer;
+
+                // 简单的裁剪策略：从中心裁剪128x120，然后拉伸到128x160
+                int src_start_x = (160 - 128) / 2; // 从x=16开始
+
+                for (int dst_y = 0; dst_y < ST7735S_LCD_V_RES; dst_y++)
+                {
+                    int src_y = (dst_y * 120) / ST7735S_LCD_V_RES; // 拉伸映射
+                    for (int dst_x = 0; dst_x < ST7735S_LCD_H_RES; dst_x++)
+                    {
+                        int src_x = src_start_x + dst_x;
+                        dst[dst_y * ST7735S_LCD_H_RES + dst_x] =
+                            src[src_y * 160 + src_x];
+                    }
                 }
-                
-                frame_count++;
-                if (frame_count % frame_log_interval == 0) {  // Log every 30 frames
-                    ESP_LOGI(TAG, "Frame %lu displayed, size: %d bytes", frame_count, pic->len);
-                }
-            } else {
-                ESP_LOGW(TAG, "Invalid frame - format: %d, size: %d, expected max: %zu", 
-                         pic->format, pic->len, frame_buffer_size);
+
+                // 显示到LCD
+                esp_lcd_panel_draw_bitmap(panel_handle, 0, 0,
+                                          ST7735S_LCD_H_RES, ST7735S_LCD_V_RES,
+                                          frame_buffer);
             }
-            
-            // Always return the frame buffer
+            else
+            {
+                ESP_LOGW(TAG, "Camera frame size mismatch: %dx%d, format: %d",
+                         pic->width, pic->height, pic->format);
+            }
+
             esp_camera_fb_return(pic);
         } else {
             ESP_LOGE(TAG, "Camera capture failed");
-            vTaskDelay(pdMS_TO_TICKS(100)); // Wait before retry
         }
-        
-        // Frame rate control (~30 FPS)
-        vTaskDelay(pdMS_TO_TICKS(33));
+
+        // 控制帧率
+        vTaskDelay(pdMS_TO_TICKS(50)); // 约20fps
     }
 }
 
