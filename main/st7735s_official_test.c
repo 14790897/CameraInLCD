@@ -137,8 +137,26 @@ static esp_err_t init_lcd_panel(void)
     }
     ESP_LOGI(TAG, "✓ 面板重置和初始化成功");
     
-    // 5. 开启显示
-    ESP_LOGI(TAG, "5. 开启显示");
+    // 5. 设置显示方向和镜像（重要！）
+    ESP_LOGI(TAG, "5. 设置显示方向");
+    ret = esp_lcd_panel_mirror(panel_handle, true, false);  // 水平镜像
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "设置镜像失败: %s", esp_err_to_name(ret));
+    }
+    
+    ret = esp_lcd_panel_swap_xy(panel_handle, false);  // 不交换XY轴
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "设置XY轴失败: %s", esp_err_to_name(ret));
+    }
+    
+    ret = esp_lcd_panel_invert_color(panel_handle, true);  // 尝试颜色反转
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "设置颜色反转失败: %s", esp_err_to_name(ret));
+    }
+    ESP_LOGI(TAG, "✓ 显示方向设置完成");
+    
+    // 6. 开启显示
+    ESP_LOGI(TAG, "6. 开启显示");
     ret = esp_lcd_panel_disp_on_off(panel_handle, true);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "开启显示失败: %s", esp_err_to_name(ret));
@@ -194,14 +212,33 @@ static esp_err_t fill_color(uint16_t color)
     }
     ESP_LOGI(TAG, "缓冲区填充完成，开始绘制...");
     
-    // 绘制到屏幕 - 使用ST7735S分辨率
-    esp_err_t ret = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 
-                                             ST7735S_LCD_H_RES, ST7735S_LCD_V_RES, 
+    // ST7735S可能需要显示偏移，尝试不同的起始位置
+    int x_offset = 2;  // ST7735S通常有2像素X偏移
+    int y_offset = 1;  // ST7735S通常有1像素Y偏移
+    
+    ESP_LOGI(TAG, "尝试带偏移的绘制: X偏移=%d, Y偏移=%d", x_offset, y_offset);
+    
+    // 绘制到屏幕 - 使用ST7735S分辨率和偏移
+    esp_err_t ret = esp_lcd_panel_draw_bitmap(panel_handle, 
+                                             x_offset, y_offset, 
+                                             x_offset + ST7735S_LCD_H_RES, 
+                                             y_offset + ST7735S_LCD_V_RES, 
                                              pixel_buffer);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "绘制位图失败: %s", esp_err_to_name(ret));
-        free(pixel_buffer);
-        return ret;
+        ESP_LOGE(TAG, "带偏移绘制位图失败: %s，尝试无偏移绘制", esp_err_to_name(ret));
+        
+        // 如果带偏移失败，尝试无偏移绘制
+        ret = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, 
+                                       ST7735S_LCD_H_RES, ST7735S_LCD_V_RES, 
+                                       pixel_buffer);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "无偏移绘制位图也失败: %s", esp_err_to_name(ret));
+            free(pixel_buffer);
+            return ret;
+        }
+        ESP_LOGI(TAG, "无偏移绘制成功");
+    } else {
+        ESP_LOGI(TAG, "带偏移绘制成功");
     }
     
     free(pixel_buffer);
@@ -209,39 +246,62 @@ static esp_err_t fill_color(uint16_t color)
     return ESP_OK;
 }
 
-// 显示红色测试
-static esp_err_t run_red_display_test(void)
+// 显示多色测试（用于调试）
+static esp_err_t run_color_display_test(void)
 {
-    ESP_LOGI(TAG, "=== 开始红色显示测试 ===");
+    ESP_LOGI(TAG, "=== 开始多色显示测试 ===");
     
-    // 只测试红色填充
-    ESP_LOGI(TAG, "红色填充测试");
-    esp_err_t ret = fill_color(0xF800);  // 红色 RGB565
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "红色填充失败");
-        return ret;
+    // 测试多种颜色以确认显示是否工作
+    uint16_t test_colors[] = {
+        0xF800,  // 红色 RGB565
+        0x07E0,  // 绿色 RGB565  
+        0x001F,  // 蓝色 RGB565
+        0xFFFF,  // 白色 RGB565
+        0x0000,  // 黑色 RGB565
+        0xFFE0,  // 黄色 RGB565
+        0xF81F,  // 品红色 RGB565
+        0x07FF,  // 青色 RGB565
+    };
+    
+    const char* color_names[] = {
+        "红色", "绿色", "蓝色", "白色", 
+        "黑色", "黄色", "品红色", "青色"
+    };
+    
+    for (int i = 0; i < 8; i++) {
+        ESP_LOGI(TAG, "测试颜色 %d/8: %s (0x%04X)", i+1, color_names[i], test_colors[i]);
+        
+        esp_err_t ret = fill_color(test_colors[i]);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "%s填充失败", color_names[i]);
+            return ret;
+        }
+        
+        // 每种颜色显示2秒
+        ESP_LOGI(TAG, "✓ %s显示完成，等待2秒...", color_names[i]);
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
     
-    ESP_LOGI(TAG, "✓ 红色填充完成，保持显示");
+    ESP_LOGI(TAG, "✓ 所有颜色测试完成");
     return ESP_OK;
 }
 
 void app_main(void)
 {
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "🚀 ST7735S LCD红色显示测试程序");
+    ESP_LOGI(TAG, "🚀 ST7735S LCD多色显示测试程序");
     ESP_LOGI(TAG, "ST7735S分辨率: %dx%d", ST7735S_LCD_H_RES, ST7735S_LCD_V_RES);
     ESP_LOGI(TAG, "调试模式SPI时钟: 1 MHz (降低频率用于调试)");
-    ESP_LOGI(TAG, "测试内容: 仅显示红色，保持不变");
+    ESP_LOGI(TAG, "测试内容: 循环显示多种颜色");
 
     // 检查GPIO状态
     debug_gpio_status();
     
     // 初始化背光
-    if (init_backlight() != ESP_OK) {
-        ESP_LOGE(TAG, "背光初始化失败");
-        return;
-    }
+    // if (init_backlight() != ESP_OK) {
+    //     ESP_LOGE(TAG, "背光初始化失败");
+    //     return;
+    // }
     
     // 初始化LCD面板
     if (init_lcd_panel() != ESP_OK) {
@@ -249,14 +309,23 @@ void app_main(void)
         return;
     }
     
-    // 运行红色显示测试
-    if (run_red_display_test() != ESP_OK) {
-        ESP_LOGE(TAG, "红色显示测试失败");
+    // 运行多色显示测试
+    if (run_color_display_test() != ESP_OK) {
+        ESP_LOGE(TAG, "多色显示测试失败");
         return;
     }
     
-    // 保持红色显示，不再循环切换
+    // 循环显示不同颜色
+    ESP_LOGI(TAG, "开始循环显示...");
+    uint16_t colors[] = {0xF800, 0x07E0, 0x001F, 0xFFFF, 0x0000};  // 红绿蓝白黑
+    const char* names[] = {"红色", "绿色", "蓝色", "白色", "黑色"};
+    int color_index = 0;
+    
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));  // 每10秒打印一次状态信息
+        ESP_LOGI(TAG, "循环显示: %s", names[color_index]);
+        fill_color(colors[color_index]);
+        
+        color_index = (color_index + 1) % 5;
+        vTaskDelay(pdMS_TO_TICKS(3000));  // 每3秒切换一次颜色
     }
 }
