@@ -70,7 +70,7 @@ static esp_err_t camera_init(void)
     config.pin_sccb_scl = EXAMPLE_ISP_DVP_CAM_SCCB_SCL_IO;
     config.pin_pwdn = EXAMPLE_ISP_DVP_CAM_PWDN_IO;
     config.pin_reset = EXAMPLE_ISP_DVP_CAM_RESET_IO;
-    config.xclk_freq_hz = 20000000;     
+    config.xclk_freq_hz = 10000000;     // 恢复到10MHz，6MHz可能太低
     config.frame_size = FRAMESIZE_QVGA; // 320x240
     config.pixel_format = PIXFORMAT_RGB565; // RGB565 format
     config.grab_mode = CAMERA_GRAB_LATEST;  // 改为LATEST避免缓冲积累
@@ -112,20 +112,55 @@ static esp_err_t camera_init(void)
     // 安全地设置传感器参数 - 检查函数指针是否有效
     ESP_LOGI(TAG, "Configuring sensor settings...");
 
+    // 首先设置关键的像素格式和帧大小
+    if (s->set_pixformat)
+    {
+        s->set_pixformat(s, PIXFORMAT_RGB565);
+        ESP_LOGI(TAG, "✓ Pixel format explicitly set to RGB565");
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
     // 首先设置帧率控制以增加HTS/VTS时间
     if (s->set_framesize)
     {
         s->set_framesize(s, FRAMESIZE_QVGA);
         ESP_LOGI(TAG, "✓ Frame size set to QVGA");
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
+    // 禁用测试模式和颜色条
+    if (s->set_colorbar)
+    {
+        s->set_colorbar(s, 0); // 确保禁用颜色条测试模式
+        ESP_LOGI(TAG, "✓ Color bar test mode disabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    else
+    {
+        ESP_LOGW(TAG, "⚠ set_colorbar function not available");
+    }
+
+    // 设置正确的输出格式相关参数
+    if (s->set_raw_gma)
+    {
+        s->set_raw_gma(s, 1); // 启用Gamma校正
+        ESP_LOGI(TAG, "✓ Gamma correction enabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_lenc)
+    {
+        s->set_lenc(s, 1); // 启用镜头校正
+        ESP_LOGI(TAG, "✓ Lens correction enabled");
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 
     // 设置较低的增益和曝光以稳定时序
     if (s->set_gainceiling)
     {
-        s->set_gainceiling(s, GAINCEILING_32X); // 降低增益上限
-        ESP_LOGI(TAG, "✓ Gain ceiling set to 32X (lower for stable timing)");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        s->set_gainceiling(s, GAINCEILING_16X); // 进一步降低增益
+        ESP_LOGI(TAG, "✓ Gain ceiling set to 16X (for stable image)");
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     else
     {
@@ -136,7 +171,7 @@ static esp_err_t camera_init(void)
     {
         s->set_gain_ctrl(s, 1); // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Gain control enabled");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     else
     {
@@ -147,7 +182,7 @@ static esp_err_t camera_init(void)
     {
         s->set_exposure_ctrl(s, 1); // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Exposure control enabled");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     else
     {
@@ -156,15 +191,15 @@ static esp_err_t camera_init(void)
     if (s->set_brightness) {
         s->set_brightness(s, 0);     // -2 to 2
         ESP_LOGI(TAG, "✓ Brightness set");
-        vTaskDelay(pdMS_TO_TICKS(150)); // 增加延迟为时序留出空间
+        vTaskDelay(pdMS_TO_TICKS(200));
     } else {
         ESP_LOGW(TAG, "⚠ set_brightness function not available");
     }
     
     if (s->set_contrast) {
-        s->set_contrast(s, 0);       // -2 to 2
-        ESP_LOGI(TAG, "✓ Contrast set");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        s->set_contrast(s, 1); // 增加对比度帮助图像清晰
+        ESP_LOGI(TAG, "✓ Contrast set to +1");
+        vTaskDelay(pdMS_TO_TICKS(200));
     } else {
         ESP_LOGW(TAG, "⚠ set_contrast function not available");
     }
@@ -172,31 +207,37 @@ static esp_err_t camera_init(void)
     if (s->set_saturation) {
         s->set_saturation(s, 0);     // -2 to 2
         ESP_LOGI(TAG, "✓ Saturation set");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     } else {
         ESP_LOGW(TAG, "⚠ set_saturation function not available");
     }
 
-    if (s->set_colorbar) {
-        s->set_colorbar(s, 0);       // 0 = disable, 1 = enable
-        ESP_LOGI(TAG, "✓ Color bar disabled");
-        vTaskDelay(pdMS_TO_TICKS(150));
-    } else {
-        ESP_LOGW(TAG, "⚠ set_colorbar function not available");
-    }
-    
     if (s->set_whitebal) {
         s->set_whitebal(s, 1);       // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ White balance enabled");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     } else {
         ESP_LOGW(TAG, "⚠ set_whitebal function not available");
+    }
+
+    if (s->set_awb_gain)
+    {
+        s->set_awb_gain(s, 1); // 启用自动白平衡增益
+        ESP_LOGI(TAG, "✓ Auto white balance gain enabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_wb_mode)
+    {
+        s->set_wb_mode(s, 0); // 自动白平衡模式
+        ESP_LOGI(TAG, "✓ White balance mode set to auto");
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 
     if (s->set_hmirror) {
         s->set_hmirror(s, 0);        // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Horizontal mirror disabled");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     } else {
         ESP_LOGW(TAG, "⚠ set_hmirror function not available");
     }
@@ -204,15 +245,37 @@ static esp_err_t camera_init(void)
     if (s->set_vflip) {
         s->set_vflip(s, 0);          // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Vertical flip disabled");
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(200));
     } else {
         ESP_LOGW(TAG, "⚠ set_vflip function not available");
+    }
+
+    // 关键：设置正确的时钟极性和同步信号
+    if (s->set_dcw)
+    {
+        s->set_dcw(s, 1); // 启用DCW (Data Clock Width)
+        ESP_LOGI(TAG, "✓ DCW enabled for proper timing");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_bpc)
+    {
+        s->set_bpc(s, 0); // 禁用坏点校正
+        ESP_LOGI(TAG, "✓ Bad pixel correction disabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_wpc)
+    {
+        s->set_wpc(s, 1); // 启用白点校正
+        ESP_LOGI(TAG, "✓ White pixel correction enabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 
     // 额外的时序优化设置
     ESP_LOGI(TAG, "Applying additional timing optimizations for DMA...");
 
-    // 设置特殊的时序模式以减少数据突发传输
+    // 确保禁用所有测试模式
     if (s->set_special_effect)
     {
         s->set_special_effect(s, 0); // 无特效，减少处理负载
@@ -220,12 +283,37 @@ static esp_err_t camera_init(void)
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 
+    // 设置AGC (自动增益控制)
+    if (s->set_agc_gain)
+    {
+        s->set_agc_gain(s, 0); // 较低的AGC增益
+        ESP_LOGI(TAG, "✓ AGC gain set to low");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // 设置AEC (自动曝光控制)
+    if (s->set_aec_value)
+    {
+        s->set_aec_value(s, 300); // 中等曝光值
+        ESP_LOGI(TAG, "✓ AEC value set to 300");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
     // 如果支持，设置较低的质量模式以减少数据量
     if (s->set_quality)
     {
-        s->set_quality(s, 20); // 较低质量以减少数据传输压力
-        ESP_LOGI(TAG, "✓ Quality set to lower value for stable DMA");
+        s->set_quality(s, 10); // 提高质量设置
+        ESP_LOGI(TAG, "✓ Quality set to higher value for better image");
         vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // 最重要：重新确认像素格式设置
+    ESP_LOGI(TAG, "Final pixel format confirmation...");
+    if (s->set_pixformat)
+    {
+        s->set_pixformat(s, PIXFORMAT_RGB565);
+        ESP_LOGI(TAG, "✓ Pixel format re-confirmed as RGB565");
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     ESP_LOGI(TAG, "Camera initialized successfully");

@@ -52,7 +52,7 @@ static esp_err_t example_camera_init(void)
     config.pin_sccb_scl = EXAMPLE_ISP_DVP_CAM_SCCB_SCL_IO;
     config.pin_pwdn = EXAMPLE_ISP_DVP_CAM_PWDN_IO;
     config.pin_reset = EXAMPLE_ISP_DVP_CAM_RESET_IO;
-    config.xclk_freq_hz = 6000000;
+    config.xclk_freq_hz = 16000000;         // 16MHz时钟频率
     config.frame_size = FRAMESIZE_QQVGA;    // 160x120 for ST7735S
     config.pixel_format = PIXFORMAT_RGB565; // RGB565 format
     config.grab_mode = CAMERA_GRAB_LATEST;  // Changed to LATEST to avoid buffer buildup
@@ -77,82 +77,129 @@ static esp_err_t example_camera_init(void)
     ESP_LOGI(TAG, "Camera sensor detected: PID=0x%02x, VER=0x%02x", s->id.PID, s->id.VER);
 
     // Enable and configure sensor settings for consistent RGB565 output
+    ESP_LOGI(TAG, "Setting critical pixel format and frame size...");
+
+    if (s->set_pixformat)
+    {
+        s->set_pixformat(s, PIXFORMAT_RGB565); // Ensure RGB565 format
+        ESP_LOGI(TAG, "✓ Pixel format explicitly set to RGB565");
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
     if (s->set_framesize) {
         s->set_framesize(s, FRAMESIZE_QQVGA);  // Ensure 160x120
         ESP_LOGI(TAG, "✓ Frame size set to QQVGA (160x120)");
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(300));
     }
 
-    if (s->set_pixformat) {
-        s->set_pixformat(s, PIXFORMAT_RGB565);  // Ensure RGB565 format
-        ESP_LOGI(TAG, "✓ Pixel format set to RGB565");
-        vTaskDelay(pdMS_TO_TICKS(100));
+    // 禁用测试模式和颜色条 - 这是关键！
+    if (s->set_colorbar)
+    {
+        s->set_colorbar(s, 0); // 确保禁用颜色条测试模式
+        ESP_LOGI(TAG, "✓ Color bar test mode DISABLED");
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+    else
+    {
+        ESP_LOGW(TAG, "⚠ set_colorbar function not available");
     }
 
     // Configure sensor settings for stable operation
     if (s->set_brightness) {
         s->set_brightness(s, 0);     // -2 to 2
         ESP_LOGI(TAG, "✓ Brightness set");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_contrast) {
-        s->set_contrast(s, 0);       // -2 to 2
-        ESP_LOGI(TAG, "✓ Contrast set");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        s->set_contrast(s, 1); // 增加对比度
+        ESP_LOGI(TAG, "✓ Contrast set to +1");
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_saturation) {
         s->set_saturation(s, 0);     // -2 to 2
         ESP_LOGI(TAG, "✓ Saturation set");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_gainceiling) {
-        s->set_gainceiling(s, GAINCEILING_32X);  // Lower gain for stability
-        ESP_LOGI(TAG, "✓ Gain ceiling set");
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-    
-    if (s->set_colorbar) {
-        s->set_colorbar(s, 0);       // 0 = disable, 1 = enable
-        ESP_LOGI(TAG, "✓ Color bar disabled");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        s->set_gainceiling(s, GAINCEILING_16X); // Lower gain for stability
+        ESP_LOGI(TAG, "✓ Gain ceiling set to 16X");
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_whitebal) {
         s->set_whitebal(s, 1);       // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ White balance enabled");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_gain_ctrl) {
         s->set_gain_ctrl(s, 1);      // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Gain control enabled");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_exposure_ctrl) {
         s->set_exposure_ctrl(s, 1);  // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Exposure control enabled");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_hmirror) {
         s->set_hmirror(s, 0);        // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Horizontal mirror disabled");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     
     if (s->set_vflip) {
         s->set_vflip(s, 0);          // 0 = disable, 1 = enable
         ESP_LOGI(TAG, "✓ Vertical flip disabled");
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // 关键的图像质量设置
+    if (s->set_raw_gma)
+    {
+        s->set_raw_gma(s, 1); // 启用Gamma校正
+        ESP_LOGI(TAG, "✓ Gamma correction enabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_lenc)
+    {
+        s->set_lenc(s, 1); // 启用镜头校正
+        ESP_LOGI(TAG, "✓ Lens correction enabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_awb_gain)
+    {
+        s->set_awb_gain(s, 1); // 启用自动白平衡增益
+        ESP_LOGI(TAG, "✓ Auto white balance gain enabled");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    if (s->set_wb_mode)
+    {
+        s->set_wb_mode(s, 0); // 自动白平衡模式
+        ESP_LOGI(TAG, "✓ White balance mode set to auto");
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    // 最终确认像素格式
+    ESP_LOGI(TAG, "Final confirmation of pixel format...");
+    if (s->set_pixformat)
+    {
+        s->set_pixformat(s, PIXFORMAT_RGB565);
+        ESP_LOGI(TAG, "✓ Pixel format RE-CONFIRMED as RGB565");
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     // Wait for sensor to stabilize with new settings
     ESP_LOGI(TAG, "Waiting for sensor to stabilize...");
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(3000)); // 增加稳定时间到3秒
 
     ESP_LOGI(TAG, "Camera initialized successfully");
     return ESP_OK;
@@ -308,16 +355,41 @@ void app_main(void)
                         }
                     }
                 } else if (pic->width == 128 && pic->height == 128) {
-                    // Handle 128x128 to 128x160 conversion
+                    // Handle 128x128 to 128x160 conversion - 修复拉伸算法
+                    // 方案1: 居中显示，上下留黑边
+                    int offset_y = (ST7735S_LCD_V_RES - 128) / 2; // 垂直偏移16像素
+
+                    // 先清空整个目标缓冲区为黑色
+                    memset(dst, 0, ST7735S_LCD_H_RES * ST7735S_LCD_V_RES * sizeof(uint16_t));
+
+                    // 将128x128图像居中放置在128x160显示区域中
+                    for (int src_y = 0; src_y < 128; src_y++)
+                    {
+                        int dst_y = src_y + offset_y;
+                        if (dst_y >= 0 && dst_y < ST7735S_LCD_V_RES)
+                        {
+                            for (int src_x = 0; src_x < 128; src_x++)
+                            {
+                                dst[dst_y * ST7735S_LCD_H_RES + src_x] =
+                                    src[src_y * 128 + src_x];
+                            }
+                        }
+                    }
+
+                    /* 备选方案2: 垂直拉伸填满屏幕（如果想要填满屏幕可以使用这个）
                     for (int dst_y = 0; dst_y < ST7735S_LCD_V_RES; dst_y++)
                     {
-                        int src_y = (dst_y * 128) / ST7735S_LCD_V_RES; // Map to source height
+                        // 更精确的映射算法
+                        int src_y = (dst_y * 128) / ST7735S_LCD_V_RES;
+                        if (src_y >= 128) src_y = 127; // 边界检查
+
                         for (int dst_x = 0; dst_x < ST7735S_LCD_H_RES; dst_x++)
                         {
                             dst[dst_y * ST7735S_LCD_H_RES + dst_x] =
                                 src[src_y * 128 + dst_x];
                         }
                     }
+                    */
                 }
 
                 // Display to LCD
@@ -337,7 +409,7 @@ void app_main(void)
         }
 
         // 控制帧率
-        vTaskDelay(pdMS_TO_TICKS(50)); // 约20fps
+        vTaskDelay(pdMS_TO_TICKS(100)); // 降低到10fps以便观察图像质量
     }
 }
 
