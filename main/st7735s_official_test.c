@@ -16,7 +16,7 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_heap_caps.h"
-#include "esp_lcd_st7735.h"  
+#include "esp_lcd_st7735.h"
 #include "example_config.h"
 
 static const char *TAG = "ST7735S_OFFICIAL";
