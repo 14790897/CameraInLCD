@@ -5,7 +5,7 @@
 
 ## 📋 项目概述
 
-基于ESP32-S3的DVP摄像头和LCD显示屏项目，支持多种LCD驱动芯片和测试模式。
+基于ESP32-S3的DVP摄像头和LCD显示屏项目
 
 本项目提供了完整的ESP32-S3 DVP摄像头和LCD显示解决方案，包含：
 - OV7670 DVP摄像头支持
@@ -115,7 +115,7 @@ GPIO46           →    D7 (数据线7)
 - ESP-IDF v5.0+
 - ESP32-S3开发板
 - 支持的LCD显示屏
-- OV7670摄像头模块（可选）
+- OV7670摄像头模块
 
 ### 编译和烧录
 
@@ -217,39 +217,12 @@ idf_component_register(SRCS "st7735s_official_test.c"
    idf.py build
    ```
 
-2. **组件依赖冲突**
-   
-   **错误信息**: `Component dependency conflict`
-   
-   **解决方案**:
-   ```bash
-   # 检查current idf_component.yml
-   cat main/idf_component.yml
-   
-   # 如果有冲突，重新添加正确版本
-   idf.py add-dependency "teriyakigod/esp_lcd_st7735^0.0.1"
-   ```
-
 ### LCD无显示问题
 
 1. **检查硬件连接**
-   - 确认所有引脚连接正确
+   - 确认所有引脚连接正确 (重要)
    - 检查电源是否为3.3V（不是5V）
    - 确认GND连接
-
-2. **使用诊断工具**
-
-   ```bash
-   # 编辑 main/CMakeLists.txt，启用诊断工具
-   # 取消注释 lcd_diagnostic.c 或 lcd_fix.c
-   idf.py build flash monitor
-   ```
-
-3. **常见问题**
-   - MISO引脚未连接（某些LCD模块没有此引脚）
-   - DC和RST引脚接反
-   - SPI时钟频率过高
-   - LCD芯片型号不匹配
 
 ### 摄像头问题
 
