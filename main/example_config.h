@@ -26,8 +26,8 @@ extern "C"
 #define EXAMPLE_PIN_NUM_LCD_RST 42
 #define EXAMPLE_PIN_NUM_LCD_CS 16
 #define EXAMPLE_PIN_NUM_BK_LIGHT -1
-#define EXAMPLE_LCD_H_RES 320
-#define EXAMPLE_LCD_V_RES 240
+// #define EXAMPLE_LCD_H_RES 320
+// #define EXAMPLE_LCD_V_RES 240
 
 // OV7670 Camera Sensor Configuration
 #define EXAMPLE_ISP_DVP_CAM_PWDN_IO (12)
@@ -52,7 +52,7 @@ extern "C"
 #define EXAMPLE_ISP_DVP_CAM_HSYNC_IO (40)// OV7670支持640 x 480 color Raw Bayer RGB Processed Bayer RGB
 // YUV/YCbCr422 GRB422 RGB565/555
 
-#define EXAMPLE_CAM_FORMAT "DVP_8bit_20Minput_RGB565_320x240_30fps"
+// #define EXAMPLE_CAM_FORMAT "DVP_8bit_20Minput_RGB565_320x240_30fps"
 
 #ifdef __cplusplus
 }

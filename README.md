@@ -1,154 +1,397 @@
-| Supported Targets | ESP32-P4 |
+| Supported Targets | ESP32-S3 |
 | ----------------- | -------- |
 
+# ESP32-S3 DVP Camera + LCD Display Project
 
-# DVP Camera display via DSI example
+## 📋 项目概述
 
-## Overview
+基于ESP32-S3的DVP摄像头和LCD显示屏项目，支持多种LCD驱动芯片和测试模式。
 
-This example demonstrates how to use the esp_driver_cam component to capture DVP camera sensor signals and display it via DSI interface. This example will auto-detect camera sensors via [ESP camera sensor driver](https://components.espressif.com/components/espressif/esp_cam_sensor) and capture camera sensor signals via DVP interface and display it via DSI interface.
+本项目提供了完整的ESP32-S3 DVP摄像头和LCD显示解决方案，包含：
+- OV7670 DVP摄像头支持
+- LCD驱动芯片支持（ST7735S）
+- 完整的硬件测试和诊断工具
+- 模块化的代码结构，便于选择不同功能
 
-## Usage
+⚠️ **重要提示**: 使用前请先阅读 [核心代码修改说明(必看)](#-核心代码修改说明必看)，了解关键的SCCB驱动修改内容！
 
-The subsections below give only absolutely necessary information. For full steps to configure ESP-IDF and use it to build and run projects, see [ESP-IDF Getting Started](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html#get-started).
+## 📋 快速导航
 
+🔥 **必读内容**:
 
-### Hardware Required
+- [🔧 核心代码修改说明(必看)](#-核心代码修改说明必看) - SCCB驱动关键修改
+- [🔧 硬件配置](#-硬件配置) - 引脚连接和上拉电阻配置
 
-- OV2640 camera sensor, or other camera sensors with DVP port that can output raw format color data
-- EK79007 or ILI9881C LCD screen
-- ESP32P4 devkit
+📖 **功能说明**:
 
-**Note:** For EK79007 you will need to connect following pins:
-- 5V - 5V
-- GND - GND
-- RST_LCD - 3V3
+- [🧪 测试模式说明](#-测试模式说明) - 不同功能模块的使用方法
+- [🔍 故障排除](#-故障排除) - 常见问题解决方案
 
-You can also connect camera sensors and LCD screens from other vendors to the ESP chip, you can find corresponding camera or LCD drivers from [ESP Component Registry](https://components.espressif.com), or design your own customized drivers.
+🛠️ **开发相关**:
 
+- [🔧 自定义配置](#-自定义配置) - 修改引脚和参数
+- [📝 开发说明](#-开发说明) - 扩展和定制指南
 
-                                   GND                                                                   GND
-                ┌────────────────────────────────────────────────┐             ┌─────────────────────────────────────────────────────────┐
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                                │             │                                                         │
-                │                                ┌───────────────┴─────────────┴──────────────────┐                                      │
-                │                                │                                                │                           ┌──────────┴───────────┐
-                │                                │                                                │      DSI DATA 1P          │                      │
-                │                                │                                                ├───────────────────────────┤                      │
-    ┌───────────┴─────────┐                      │                                                │                           │                      │
-    │                     │                      │                                                │      DSI DATA 1N          │                      │
-    │                     │                      │                                                ├───────────────────────────┤                      │
-    │                     │       XCLK           │                  ESP32-P4                      │                           │                      │
-    │     DVP Camera      ├──────────────────────┤                                                │      DSI CLK N            │      LCD Screen      │
-    │                     │                      │                                                ├───────────────────────────┤                      │
-    │                     │       D0~7           │                                                │                           │                      │
-    │                     ├──────────────────────┤                                                │      DSI CLK P            │                      │
-    │                     │                      │                                                ├───────────────────────────┤                      │
-    │                     │       PCLK           │                                                │                           │                      │
-    │                     ├──────────────────────┤                                                │      DSI DATA 0P          │                      │
-    │                     │                      │                                                ├───────────────────────────┤                      │
-    │                     │       VSYNC          │                                                │                           │                      │
-    │                     ├──────────────────────┤                                                │      DSI DATA 0N          │                      │
-    │                     │                      │                                                ├───────────────────────────┤                      │
-    │                     │      DE (HREF)       │                                                │                           │                      │
-    │                     ├──────────────────────┤                                                │                           └──────────────────────┘
-    │                     │                      │                                                │
-    └───────┬──┬──────────┘                      │                                                │
-            │  │           I2C SCL               │                                                │
-            │  └─────────────────────────────────┤                                                │
-            │              I2C SDA               │                                                │
-            └────────────────────────────────────┤                                                │
-                                                 └────────────────────────────────────────────────┘
+## 🔧 硬件配置
 
+### ESP32-S3开发板引脚定义
 
-### Set Chip Target
-
-First of all, your target must be supported by both:
-
-- **By your ESP-IDF version**: For the full list of supported targets, run:
-  ```
-  idf.py --list-targets
-  ```
-- **By this example**: For the full list of supported targets,  refer to the supported targets table at the top of this README.
-
-After you make sure that your target is supported, go to your example project directory and [set the chip target](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/tools/idf-py.html#select-the-target-chip-set-target):
+#### LCD显示屏连接 (SPI接口)
 
 ```
-idf.py set-target <target>
+ESP32-S3 引脚    →    LCD模块引脚
+GPIO13 (SCLK)    →    SCL/SCLK/CLK
+GPIO14 (MOSI)    →    SDA/MOSI
+GPIO17 (MISO)    →    SDO/MISO (可选)
+GPIO16 (CS)      →    CS
+GPIO48 (DC)      →    DC/RS
+GPIO42 (RST)     →    RESET/RST
+GPIO-1 (背光)    →    LED/BL (未连接)
+3.3V             →    VCC
+GND              →    GND
 ```
 
-For example, to set esp32-P4 as the chip target, run:
+#### OV7670摄像头连接 (DVP接口)
 
 ```
-idf.py set-target esp32p4
+ESP32-S3 引脚    →    OV7670引脚
+GPIO12           →    PWDN
+GPIO11           →    RESET
+GPIO2            →    SCCB_SCL (I2C时钟) + 上拉电阻
+GPIO1            →    SCCB_SDA (I2C数据) + 上拉电阻
+GPIO38           →    XCLK (主时钟)
+GPIO21           →    PCLK (像素时钟)
+GPIO39           →    VSYNC (垂直同步)
+GPIO40           →    HSYNC (水平同步)
+GPIO8            →    D0 (数据线0)
+GPIO9            →    D1 (数据线1)
+GPIO10           →    D2 (数据线2)
+GPIO4            →    D3 (数据线3)
+GPIO3            →    D4 (数据线4)
+GPIO45           →    D5 (数据线5)
+GPIO47           →    D6 (数据线6)
+GPIO46           →    D7 (数据线7)
 ```
 
+⚠️ **重要**: OV7670摄像头的SCCB_SCL和SCCB_SDA引脚需要手动添加上拉电阻！
 
-### Configure the Project
+**上拉电阻连接方法**:
 
-For information about Kconfig options, see [Project Configuration](https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/kconfig.html) > _Name of relevant section(s)_.
+- SCCB_SCL (GPIO2) → 通过4.7kΩ电阻连接到3.3V
+- SCCB_SDA (GPIO1) → 通过4.7kΩ电阻连接到3.3V
 
-To conveniently check or modify Kconfig options for this example in a project configuration menu, run:
+**为什么需要上拉电阻**:
 
+- OV7670的SCCB接口本质上是I2C协议
+- I2C总线需要上拉电阻才能正常工作
+- 某些OV7670模块没有内置上拉电阻，需要外部添加
+
+**如何判断是否需要添加上拉电阻**:
+
+📋 **检测方法**:
+
+1. **硬件检测法** (推荐，最准确)
+
+   ```text
+   步骤1: 断开摄像头与ESP32-S3的所有连接
+   步骤2: 使用万用表测量摄像头模块上SCCB_SCL和SCCB_SDA引脚的电阻
+   步骤3: 将万用表的一端接触SCCB_SCL引脚，另一端接触VCC (3.3V)引脚
+   步骤4: 读取电阻值并判断
+   ```
+
+   **判断标准**:
+   - ✅ **需要外部上拉**: 电阻值显示为无穷大 (∞Ω 或 OL)
+   - ⚠️ **模块异常**: 电阻值为 20kΩ - 60kΩ (内部上拉异常，建议更换模块)
+   - ❓ **可能有内置上拉**: 电阻值为 4.7kΩ - 10kΩ (但仍建议添加外部上拉以确保稳定)
+
+### 支持的LCD规格
+
+- **ST7735S**: 128x160像素，RGB565 (当前配置)
+
+## 🚀 快速开始
+
+### 环境要求
+
+- ESP-IDF v5.0+
+- ESP32-S3开发板
+- 支持的LCD显示屏
+- OV7670摄像头模块（可选）
+
+### 编译和烧录
+
+⚠️ **重要**: ST7735S驱动需要手动添加依赖！
+
+```bash
+# 克隆项目
+git clone <repository-url>
+cd dvp_lcd
+
+# 配置ESP-IDF环境
+. $IDF_PATH/export.sh
+
+# 添加ST7735S驱动依赖 (必须执行)
+idf.py add-dependency "teriyakigod/esp_lcd_st7735^0.0.1"
+
+# 编译项目
+idf.py build
+
+# 烧录到设备
+idf.py flash
+
+# 查看串口输出
+idf.py monitor
 ```
-idf.py menuconfig
+
+## 📁 项目结构
+
+### 主要源文件
+
+| 文件名 | 功能描述 | 推荐用途 |
+|--------|----------|----------|
+| `dvp_lcd_main.c` | 完整的摄像头+LCD组合功能 | 最终产品功能 |
+| `st7735s_official_test.c` | ST7735S驱动测试 | ST7735S显示屏测试 |
+| `camera_test.c` | 摄像头独立测试 | 摄像头功能验证 |
+
+### 配置文件选择
+
+在 `main/CMakeLists.txt` 中选择要编译的模块：
+
+```cmake
+# 取消注释对应的行来选择功能模块
+
+# ST7735S官方驱动测试（当前默认）
+idf_component_register(SRCS "st7735s_official_test.c"
+                       INCLUDE_DIRS "."
+                       REQUIRES esp_mm esp_driver_spi esp_lcd esp32-camera driver log teriyakigod__esp_lcd_st7735
+                       )
+
+# 其他模块（注释状态）
+# idf_component_register(SRCS "dvp_lcd_main.c" ...)
+# idf_component_register(SRCS "lcd_simple.c" ...)
 ```
 
+## 🧪 测试模式说明
+
+### 1. ST7735S官方驱动测试 (`st7735s_official_test.c`)
+
+- **用途**: 使用ESP-IDF官方ST7735S驱动库
+- **功能**:
+  - 标准化的驱动初始化
+  - 颜色填充测试（红、绿、蓝）
+  - 彩色矩形图案测试
+- **适用**: ST7735S显示屏的标准测试
+
+### 2. 摄像头测试 (`camera_test.c`)
+
+- **用途**: 摄像头独立测试
+- **功能**:
+  - 摄像头初始化
+  - 帧捕获测试
+  - 图像格式验证
+- **适用**: 摄像头功能验证
+
+### 3. 完整功能 (`dvp_lcd_main.c`)
+
+- **用途**: 摄像头+LCD完整功能
+- **功能**:
+  - OV7670摄像头初始化
+  - 实时图像采集
+  - LCD显示输出
+- **适用**: 最终产品功能
+
+## 🔍 故障排除
+
+### 编译错误
+
+1. **ST7735S头文件找不到**
+   
+   **错误信息**: `fatal error: esp_lcd_st7735.h: No such file or directory`
+   
+   **解决方案**:
+   ```bash
+   # 添加ST7735S驱动依赖
+   idf.py add-dependency "teriyakigod/esp_lcd_st7735^0.0.1"
+   
+   # 清理后重新编译
+   idf.py fullclean
+   idf.py build
+   ```
+
+2. **组件依赖冲突**
+   
+   **错误信息**: `Component dependency conflict`
+   
+   **解决方案**:
+   ```bash
+   # 检查current idf_component.yml
+   cat main/idf_component.yml
+   
+   # 如果有冲突，重新添加正确版本
+   idf.py add-dependency "teriyakigod/esp_lcd_st7735^0.0.1"
+   ```
+
+### LCD无显示问题
+
+1. **检查硬件连接**
+   - 确认所有引脚连接正确
+   - 检查电源是否为3.3V（不是5V）
+   - 确认GND连接
+
+2. **使用诊断工具**
+
+   ```bash
+   # 编辑 main/CMakeLists.txt，启用诊断工具
+   # 取消注释 lcd_diagnostic.c 或 lcd_fix.c
+   idf.py build flash monitor
+   ```
+
+3. **常见问题**
+   - MISO引脚未连接（某些LCD模块没有此引脚）
+   - DC和RST引脚接反
+   - SPI时钟频率过高
+   - LCD芯片型号不匹配
+
+### 摄像头问题
+
+1. **OV7670硬件问题排查** ⚠️ **重要经验**
+
+   **问题现象**: 摄像头无法正常工作
+
+   **解决方案**:
+
+   **步骤1: 检查上拉电阻**
+   - **必须添加外部上拉电阻**: SCCB_SCL和SCCB_SDA都需要通过4.7kΩ电阻连接到3.3V
+   - **检查内部上拉电阻**: 断开摄像头与ESP32-S3的连接，用万用表测量SCCB_SCL和SCCB_SDA引脚的电阻
+     - ✅ **正常**: 电阻值为无穷大（说明没有内部上拉电阻，需要外部添加）
+     - ❌ **异常**: 电阻值为20-60千欧（说明内部上拉电阻异常，模块可能损坏）
+
+   **步骤2: 硬件连接**
+   ```
+   3.3V ──┬── 4.7kΩ ── SCCB_SCL (GPIO2)
+          └── 4.7kΩ ── SCCB_SDA (GPIO1)
+   ```
+
+   **步骤3: 软件配置**
+   - **更换摄像头模块**: 如果发现内部上拉电阻异常，建议更换新的OV7670模块
+   - **调整输出格式**: 如果出现彩色条纹，尝试将输出格式改为QVGA (320x240)
+
+   **实际案例**:
+   ```
+   问题摄像头: 内部上拉电阻 20-60kΩ → 无法正常工作
+   正常摄像头: 内部上拉电阻 ∞Ω + 外部4.7kΩ上拉 → 工作正常，输出QVGA格式
+   ```
+
+## 📦 依赖组件
+
+项目使用以下ESP-IDF组件：
+
+- `espressif/esp32-camera^2.0.0` - 摄像头驱动 (自动安装)
+- `espressif/esp_lcd_ili9341^1.0.0` - ILI9341 LCD驱动 (自动安装)
+- `teriyakigod/esp_lcd_st7735^0.0.1` - ST7735S LCD驱动 ⚠️ **需要手动添加**
+
+### ST7735S依赖安装说明
+
+⚠️ **重要**: ST7735S驱动不会自动安装，必须手动添加依赖！
+
+**安装命令**:
+
+```bash
+# 在项目根目录执行
+idf.py add-dependency "teriyakigod/esp_lcd_st7735^0.0.1"
 ```
-Set CONFIG_CAMERA_OV2640 to y
+
+**常见问题**:
+
+- 如果忘记添加依赖，编译时会出现 `esp_lcd_st7735.h: No such file or directory` 错误
+- 依赖添加后会自动更新 `main/idf_component.yml` 文件
+- 首次编译会自动下载ST7735S驱动组件
+
+**验证安装**:
+
+```bash
+# 检查依赖是否正确添加
+cat main/idf_component.yml
 ```
 
-Remember to select the LCD screen model and set corresponding correct horizontal/vertical resolution in ``menuconfig`` > ``Example DSI Configuration``.
+应该能看到类似以下内容：
 
-Available options for the camera sensor output horizontal/vertical resolution can be seen in ``menuconfig`` > ``Example Configuration``. Note that the horizontal resolution for the camera should be the same as the LCD screen horizontal resolution.
-
-
-### Build and Flash
-
-Execute the following command to build the project, flash it to your development board, and run the monitor tool to view the serial output:
-
-```
-idf.py build flash monitor
+```yaml
+dependencies:
+  teriyakigod/esp_lcd_st7735: "^0.0.1"
 ```
 
-This command can be reduced to `idf.py flash monitor`.
-
-If the above command fails, check the log on the serial monitor which usually provides information on the possible cause of the issue.
-
-To exit the serial monitor, use `Ctrl` + `]`.
+## 🔧 自定义配置
 
 
-## Example Output
+### 修改引脚定义
 
-If you see the following console output, your example should be running correctly:
+在 `main/example_config.h` 中修改对应的GPIO定义。
 
-```
-I (1509) main_task: Calling app_main()
-I (1509) ek79007: version: 1.0.1
-I (1549) ov2640: Detected Camera sensor PID=0x26
-I (1549) sensor_init: fmt[0].name:DVP_8bit_20Minput_RGB565_640x480_6fps
-I (1549) sensor_init: fmt[1].name:DVP_8bit_20Minput_YUV422_640x480_6fps
-I (1549) sensor_init: fmt[2].name:DVP_8bit_20Minput_JPEG_640x480_25fps
-I (1559) sensor_init: fmt[3].name:DVP_8bit_20Minput_RGB565_240x240_25fps
-I (1569) sensor_init: fmt[4].name:DVP_8bit_20Minput_YUV422_240x240_25fps
-I (1569) sensor_init: fmt[5].name:DVP_8bit_20Minput_JPEG_320x240_50fps
-I (1579) sensor_init: fmt[6].name:DVP_8bit_20Minput_JPEG_1280x720_12fps
-I (1589) sensor_init: fmt[7].name:DVP_8bit_20Minput_JPEG_1600x1200_12fps
-I (1589) sensor_init: fmt[8].name:DVP_8bit_20Minput_RAW8_800x640_15fps
-I (1599) sensor_init: fmt[9].name:DVP_8bit_20Minput_RAW8_800x800_15fps
-I (1609) sensor_init: fmt[10].name:DVP_8bit_20Minput_RAW8_1024x600_15fps
-I (2609) sensor_init: Format in use:DVP_8bit_20Minput_RAW8_1024x600_15fps
+### 修改SPI时钟频率
+
+```c
+#define EXAMPLE_LCD_PIXEL_CLOCK_HZ (20 * 1000 * 1000)  // 20MHz
 ```
 
+**注意**: 如果遇到彩色条纹问题，建议使用QVGA (320x240) 格式。
 
-## Reference
+## 🔧 核心代码修改说明(必看)
 
-- Link to the ESP-IDF feature's API reference, for example [ESP-IDF: Camera Controller Driver](https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/peripherals/camera_driver.html)
-- [ESP-IDF Getting Started](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html#get-started)
-- [Project Configuration](https://docs.espressif.com/projects/esp-idf/en/latest/api-reference/kconfig.html) (Kconfig Options)
+### SCCB_Read 函数优化
+
+**文件位置**: `managed_components/espressif__esp32-camera/driver/sccb-ng.c`
+
+**修改原因**: 为了提高SCCB/I2C通信的兼容性和稳定性，我们对原始的 `SCCB_Read` 函数进行了关键修改。
+
+**原始代码问题**:
+
+- 使用单次 `i2c_master_transmit_receive` 调用
+- 在某些摄像头模块或特定硬件配置下可能出现通信不稳定
+
+**修改后的实现**:
+
+```c
+esp_err_t SCCB_Read(uint8_t slv_addr, uint8_t reg, uint8_t *data)
+{
+    esp_err_t ret = ESP_FAIL;
+    
+    // 分步骤进行I2C通信，提高兼容性
+    
+    // 步骤1: 发送寄存器地址
+    ret = i2c_master_transmit(s_i2c_handle, slv_addr, &reg, 1, SCCB_FREQ);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    
+    // 步骤2: 读取数据
+    ret = i2c_master_receive(s_i2c_handle, slv_addr, data, 1, SCCB_FREQ);
+    
+    return ret;
+}
+```
+
+## 📝 开发说明
+
+### 添加新的LCD驱动
+
+1. 在 `main/` 目录创建新的文件
+2. 在 `main/CMakeLists.txt` 中添加编译选项
+3. 根据需要在 `main/idf_component.yml` 中添加依赖
+
+### 代码风格
+
+- 使用ESP-IDF标准的错误处理 (`ESP_RETURN_ON_ERROR`)
+- 详细的日志输出用于调试
+- 模块化设计，便于功能选择
+
+## 📄 许可证
+
+本项目基于 Apache 2.0 许可证开源。
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request来改进项目。
+
+## 📞 支持
+
+如有问题，请查看故障排除部分或提交Issue。
