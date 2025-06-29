@@ -86,11 +86,11 @@ static esp_err_t example_camera_init(void)
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 
-    if (s->set_framesize) {
-        s->set_framesize(s, FRAMESIZE_QVGA); // Ensure 320x240
-        ESP_LOGI(TAG, "✓ Frame size set to QQVGA (160x120)");
-        vTaskDelay(pdMS_TO_TICKS(300));
-    }
+    // if (s->set_framesize) {
+    //     s->set_framesize(s, FRAMESIZE_QVGA); // Ensure 320x240
+    //     ESP_LOGI(TAG, "✓ Frame size set to QQVGA (160x120)");
+    //     vTaskDelay(pdMS_TO_TICKS(300));
+    // }
 
     // 禁用测试模式和颜色条 - 这是关键！
     if (s->set_colorbar)
