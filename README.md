@@ -127,8 +127,8 @@ GPIO46           →    D7 (数据线7)
 
 ```bash
 # 克隆项目
-git clone <repository-url>
-cd dvp_lcd
+git clone https://github.com/14790897/CameraInLCD
+cd CameraInLCD
 
 # 配置ESP-IDF环境
 . $IDF_PATH/export.sh
