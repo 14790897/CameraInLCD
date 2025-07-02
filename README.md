@@ -202,7 +202,7 @@ idf.py monitor
 ```cmake
 # 取消注释对应的行来选择功能模块
 
-# ST7735S官方驱动测试（当前默认）
+# ST7735S驱动测试（当前默认）
 idf_component_register(SRCS "st7735s_official_test.c"
                        INCLUDE_DIRS "."
                        REQUIRES esp_mm esp_driver_spi esp_lcd esp32-camera driver log teriyakigod__esp_lcd_st7735
@@ -215,9 +215,9 @@ idf_component_register(SRCS "st7735s_official_test.c"
 
 ## 🧪 测试模式说明
 
-### 1. ST7735S官方驱动测试 (`st7735s_official_test.c`)
+### 1. ST7735S第三方驱动测试 (`st7735s_official_test.c`)
 
-- **用途**: 使用ESP-IDF官方ST7735S驱动库
+- **用途**: 使用ESP-IDF第三方ST7735S驱动库
 - **功能**:
   - 标准化的驱动初始化
   - 颜色填充测试（红、绿、蓝）
